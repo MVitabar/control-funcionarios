@@ -8,6 +8,7 @@ async function bootstrap() {
   
   // Configuración de CORS
   const allowedOrigins = [
+    '*',
     'http://localhost:8081',  // Tu frontend local
     'http://localhost:19006', // Posible otro puerto de desarrollo
     'exp://192.168.0.7:8081',
