@@ -52,7 +52,9 @@ export class TimeEntriesService {
     if (createTimeEntryDto.exitTime) {
       const entryMoment = moment(createTimeEntryDto.entryTime);
       const exitMoment = moment(createTimeEntryDto.exitTime);
-      totalHours = exitMoment.diff(entryMoment, 'hours', true).toFixed(2);
+      const regularHours = parseFloat(exitMoment.diff(entryMoment, 'hours', true).toFixed(2));
+      const extraHours = createTimeEntryDto.extraHours ? parseFloat(createTimeEntryDto.extraHours.toString()) : 0;
+      totalHours = (regularHours + extraHours).toFixed(2);
     }
 
     const createdEntry = new this.timeEntryModel({
@@ -260,8 +262,8 @@ export class TimeEntriesService {
         updateData.date = new Date(updateData.date);
       }
 
-      // Si se actualiza la hora de entrada o salida, recalcular totalHours
-      if (updateData.entryTime || updateData.exitTime) {
+      // Si se actualiza la hora de entrada, salida o horas extras, recalcular totalHours
+      if (updateData.entryTime || updateData.exitTime || updateData.extraHours !== undefined) {
         const existingEntry = await this.timeEntryModel.findById(id).exec();
         if (!existingEntry) {
           throw new NotFoundException(`No se encontró el registro con ID ${id}`);
@@ -269,11 +271,15 @@ export class TimeEntriesService {
 
         const entryTime = updateData.entryTime || existingEntry.entryTime;
         const exitTime = updateData.exitTime || existingEntry.exitTime;
+        const extraHours = updateData.extraHours !== undefined ? 
+          parseFloat(updateData.extraHours.toString()) : 
+          (existingEntry.extraHours ? parseFloat(existingEntry.extraHours.toString()) : 0);
 
         if (entryTime && exitTime) {
           const entryMoment = moment(entryTime);
           const exitMoment = moment(exitTime);
-          updateData.totalHours = parseFloat(exitMoment.diff(entryMoment, 'hours', true).toFixed(2));
+          const regularHours = parseFloat(exitMoment.diff(entryMoment, 'hours', true).toFixed(2));
+          updateData.totalHours = parseFloat((regularHours + extraHours).toFixed(2));
         } else {
           updateData.totalHours = null;
         }
