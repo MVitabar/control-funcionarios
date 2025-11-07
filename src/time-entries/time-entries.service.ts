@@ -49,10 +49,12 @@ export class TimeEntriesService {
 
     // Calcular horas trabajadas si se proporciona la hora de salida
     let totalHours = null;
+    let regularHours = null;
+    
     if (createTimeEntryDto.exitTime) {
       const entryMoment = moment(createTimeEntryDto.entryTime);
       const exitMoment = moment(createTimeEntryDto.exitTime);
-      const regularHours = parseFloat(exitMoment.diff(entryMoment, 'hours', true).toFixed(2));
+      regularHours = parseFloat(exitMoment.diff(entryMoment, 'hours', true).toFixed(2));
       const extraHours = createTimeEntryDto.extraHours ? parseFloat(createTimeEntryDto.extraHours.toString()) : 0;
       totalHours = (regularHours + extraHours).toFixed(2);
     }
@@ -60,6 +62,7 @@ export class TimeEntriesService {
     const createdEntry = new this.timeEntryModel({
       ...entryData,
       totalHours,
+      regularHours,
       status: createTimeEntryDto.status || TimeEntryStatus.PENDING,
       approvedBy: userId ? new Types.ObjectId(userId) : undefined,
       // Asegurarse de que los campos numéricos sean números
@@ -262,7 +265,7 @@ export class TimeEntriesService {
         updateData.date = new Date(updateData.date);
       }
 
-      // Si se actualiza la hora de entrada, salida o horas extras, recalcular totalHours
+      // Si se actualiza la hora de entrada, salida o horas extras, recalcular totalHours y regularHours
       if (updateData.entryTime || updateData.exitTime || updateData.extraHours !== undefined) {
         const existingEntry = await this.timeEntryModel.findById(id).exec();
         if (!existingEntry) {
@@ -279,8 +282,10 @@ export class TimeEntriesService {
           const entryMoment = moment(entryTime);
           const exitMoment = moment(exitTime);
           const regularHours = parseFloat(exitMoment.diff(entryMoment, 'hours', true).toFixed(2));
+          updateData.regularHours = regularHours;
           updateData.totalHours = parseFloat((regularHours + extraHours).toFixed(2));
         } else {
+          updateData.regularHours = null;
           updateData.totalHours = null;
         }
       }
