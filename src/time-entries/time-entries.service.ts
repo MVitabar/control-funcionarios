@@ -241,6 +241,74 @@ export class TimeEntriesService {
   }
 
 
+  async update(
+    id: string | Types.ObjectId,
+    updateTimeEntryDto: any,
+    userId: string,
+  ): Promise<TimeEntry> {
+    try {
+      const updateData: any = { ...updateTimeEntryDto };
+      
+      // Convertir fechas a objetos Date si están presentes
+      if (updateData.entryTime) {
+        updateData.entryTime = new Date(updateData.entryTime);
+      }
+      if (updateData.exitTime) {
+        updateData.exitTime = new Date(updateData.exitTime);
+      }
+      if (updateData.date) {
+        updateData.date = new Date(updateData.date);
+      }
+
+      // Si se actualiza la hora de entrada o salida, recalcular totalHours
+      if (updateData.entryTime || updateData.exitTime) {
+        const existingEntry = await this.timeEntryModel.findById(id).exec();
+        if (!existingEntry) {
+          throw new NotFoundException(`No se encontró el registro con ID ${id}`);
+        }
+
+        const entryTime = updateData.entryTime || existingEntry.entryTime;
+        const exitTime = updateData.exitTime || existingEntry.exitTime;
+
+        if (entryTime && exitTime) {
+          const entryMoment = moment(entryTime);
+          const exitMoment = moment(exitTime);
+          updateData.totalHours = parseFloat(exitMoment.diff(entryMoment, 'hours', true).toFixed(2));
+        } else {
+          updateData.totalHours = null;
+        }
+      }
+
+      // Actualizar el registro
+      const updatedEntry = await this.timeEntryModel
+        .findByIdAndUpdate(
+          id,
+          {
+            ...updateData,
+            approvedBy: new Types.ObjectId(userId),
+            updatedAt: new Date(),
+          },
+          { new: true, lean: true }
+        )
+        .populate('employee', 'name email')
+        .populate('approvedBy', 'name email')
+        .exec();
+
+      if (!updatedEntry) {
+        throw new NotFoundException(`No se encontró el registro con ID ${id}`);
+      }
+
+      return updatedEntry;
+    } catch (error) {
+      if (error.name === 'CastError') {
+        throw new BadRequestException('ID de registro no válido');
+      } else if (error.code === 11000) {
+        throw new BadRequestException('Ya existe un registro para este empleado en la fecha especificada');
+      }
+      throw error;
+    }
+  }
+
   async remove(id: string | Types.ObjectId): Promise<void> {
     try {
       const result = await this.timeEntryModel.deleteOne({ _id: id }).exec();

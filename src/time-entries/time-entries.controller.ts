@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Body,
   Param,
   Query,
@@ -19,6 +20,7 @@ import { Request } from 'express';
 import { ApiBearerAuth, ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { TimeEntryStatus } from './schemas/time-entry.schema';
 import { DateInterceptor } from '../common/interceptors/date.interceptor';
+import { UpdateTimeEntryDto } from './dto/update-time-entry.dto';
 
 @ApiTags('time-entries')
 @Controller('time-entries')
@@ -113,6 +115,20 @@ export class TimeEntriesController {
   ) {
     const userId = req.user?.['sub'];
     return this.timeEntriesService.updateStatus(id, status, userId, notes);
+  }
+
+  @Put(':id')
+  @ApiOperation({ summary: 'Actualizar un registro de horas' })
+  @ApiResponse({ status: 200, description: 'Registro actualizado correctamente.' })
+  @ApiResponse({ status: 400, description: 'Datos inválidos o ID no válido.' })
+  @ApiResponse({ status: 404, description: 'Registro no encontrado.' })
+  update(
+    @Param('id', new MongoIdPipe()) id: string,
+    @Body() updateTimeEntryDto: UpdateTimeEntryDto,
+    @Req() req: Request,
+  ) {
+    const userId = req.user?.['sub'];
+    return this.timeEntriesService.update(id, updateTimeEntryDto, userId);
   }
 
   @Delete(':id')
