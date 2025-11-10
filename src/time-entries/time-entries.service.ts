@@ -90,16 +90,21 @@ export class TimeEntriesService {
   private readonly logger = new Logger(TimeEntriesService.name);
 
   private cleanNotes(notes: any): string | undefined {
-    if (notes === null || notes === undefined || notes === '') {
+    if (notes === null || notes === undefined) {
       return undefined;
     }
 
     try {
-      // Convertir a string, limpiar y truncar si es necesario
-      return String(notes)
-        .trim()
+      const str = String(notes).trim();
+      if (str === '') {
+        return undefined;
+      }
+      
+      // Limpiar y normalizar espacios
+      return str
         .replace(/[\r\n\t]+/g, ' ')  // Reemplazar saltos de línea y tabulaciones
         .replace(/\s+/g, ' ')         // Múltiples espacios por uno solo
+        .trim()                       // Eliminar espacios al inicio/final
         .substring(0, 500);           // Limitar longitud
     } catch (error) {
       this.logger.warn(`Error al limpiar notas: ${error.message}`, notes);
