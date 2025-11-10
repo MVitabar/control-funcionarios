@@ -7,6 +7,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { CreateTimeEntryDto } from './dto/create-time-entry.dto';
 import { TimeEntry, TimeEntryDocument, TimeEntryStatus } from './schemas/time-entry.schema';
+import { convertIdsToStrings, toObjectId } from '../common/utils/mongo.utils';
 import * as moment from 'moment';
 
 @Injectable()
@@ -16,14 +17,19 @@ export class TimeEntriesService {
   ) {}
 
   async create(createTimeEntryDto: CreateTimeEntryDto, userId?: string): Promise<TimeEntry> {
-    // Convertir fechas a objetos Date
+    // Convert dates to Date objects
     const entryDate = new Date(createTimeEntryDto.date);
     const entryTime = new Date(createTimeEntryDto.entryTime);
     const exitTime = createTimeEntryDto.exitTime ? new Date(createTimeEntryDto.exitTime) : null;
+    
+    // Convert employee ID to ObjectId if it's a string
+    const employeeId = typeof createTimeEntryDto.employee === 'string' 
+      ? toObjectId(createTimeEntryDto.employee)
+      : createTimeEntryDto.employee;
 
-    // Verificar si ya existe un registro para este empleado en la fecha
+    // Check if an entry already exists for this employee on the given date
     const existingEntry = await this.timeEntryModel.findOne({
-      employee: createTimeEntryDto.employee,
+      employee: employeeId,
       date: {
         $gte: moment(entryDate).startOf('day').toDate(),
         $lte: moment(entryDate).endOf('day').toDate(),
@@ -34,13 +40,14 @@ export class TimeEntriesService {
       throw new BadRequestException('Ya existe un registro para este empleado en la fecha especificada');
     }
 
-    // Preparar datos para la creación
+    // Prepare data for creation
     const entryData = {
       ...createTimeEntryDto,
+      employee: employeeId, // Use the converted employeeId
       date: entryDate,
       entryTime: entryTime,
       exitTime: exitTime,
-      // Asegurar que los campos numéricos sean números
+      // Ensure numeric fields are numbers
       dailyRate: createTimeEntryDto.dailyRate ? Number(createTimeEntryDto.dailyRate) : undefined,
       extraHours: createTimeEntryDto.extraHours ? Number(createTimeEntryDto.extraHours) : undefined,
       extraHoursRate: createTimeEntryDto.extraHoursRate ? Number(createTimeEntryDto.extraHoursRate) : undefined,
@@ -72,33 +79,32 @@ export class TimeEntriesService {
       total: entryData.total ? Number(entryData.total) : undefined,
     });
 
-    return createdEntry.save();
+    const savedEntry = await createdEntry.save();
+    return convertIdsToStrings(savedEntry.toObject());
   }
 
   async findAllByEmployee(employeeId: string | Types.ObjectId): Promise<TimeEntry[]> {
     try {
-      // Asegurarse de que employeeId sea un ObjectId válido
-      const employeeObjectId = typeof employeeId === 'string' 
-        ? new Types.ObjectId(employeeId)
-        : employeeId;
+      // Ensure employeeId is a valid ObjectId
+      const employeeObjectId = toObjectId(employeeId);
 
-      return await this.timeEntryModel
+      const entries = await this.timeEntryModel
         .find({ employee: employeeObjectId })
         .populate('approvedBy', 'name email')
+        .populate('employee', 'name email') // Ensure employee is populated
         .sort({ date: -1, entryTime: 1 })
         .lean()
-        .exec()
-        .then(entries => {
-          // Asegurar que los campos numéricos sean números
-          return entries.map(entry => ({
-            ...entry,
-            dailyRate: entry.dailyRate ? Number(entry.dailyRate) : undefined,
-            extraHours: entry.extraHours ? Number(entry.extraHours) : undefined,
-            extraHoursRate: entry.extraHoursRate ? Number(entry.extraHoursRate) : undefined,
-            total: entry.total ? Number(entry.total) : undefined,
-            totalHours: entry.totalHours ? Number(entry.totalHours) : undefined,
-          }));
-        });
+        .exec();
+
+      // Convert numeric fields to numbers and ensure IDs are strings
+      return entries.map(entry => convertIdsToStrings({
+        ...entry,
+        dailyRate: entry.dailyRate ? Number(entry.dailyRate) : undefined,
+        extraHours: entry.extraHours ? Number(entry.extraHours) : undefined,
+        extraHoursRate: entry.extraHoursRate ? Number(entry.extraHoursRate) : undefined,
+        total: entry.total ? Number(entry.total) : undefined,
+        totalHours: entry.totalHours ? Number(entry.totalHours) : undefined,
+      }));
     } catch (error) {
       if (error.name === 'CastError') {
         throw new BadRequestException('ID de empleado no válido');
@@ -121,31 +127,27 @@ export class TimeEntriesService {
       };
 
       if (employeeId) {
-        // Asegurarse de que employeeId sea un ObjectId válido
-        const employeeObjectId = typeof employeeId === 'string' 
-          ? new Types.ObjectId(employeeId)
-          : employeeId;
-        query.employee = employeeObjectId;
+        // Ensure employeeId is a valid ObjectId
+        query.employee = toObjectId(employeeId);
       }
 
-      return await this.timeEntryModel
+      const entries = await this.timeEntryModel
         .find(query)
-        .populate('employee', 'name email') // Incluir datos básicos del empleado
-        .populate('approvedBy', 'name email') // Incluir datos de quién aprobó
+        .populate('employee', 'name email') // Include basic employee data
+        .populate('approvedBy', 'name email') // Include approver data
         .sort({ date: -1, entryTime: 1 })
         .lean()
-        .exec()
-        .then(entries => {
-          // Asegurar que los campos numéricos sean números
-          return entries.map(entry => ({
-            ...entry,
-            dailyRate: entry.dailyRate ? Number(entry.dailyRate) : undefined,
-            extraHours: entry.extraHours ? Number(entry.extraHours) : undefined,
-            extraHoursRate: entry.extraHoursRate ? Number(entry.extraHoursRate) : undefined,
-            total: entry.total ? Number(entry.total) : undefined,
-            totalHours: entry.totalHours ? Number(entry.totalHours) : undefined,
-          }));
-        });
+        .exec();
+
+      // Convert numeric fields to numbers and ensure IDs are strings
+      return entries.map(entry => convertIdsToStrings({
+        ...entry,
+        dailyRate: entry.dailyRate ? Number(entry.dailyRate) : undefined,
+        extraHours: entry.extraHours ? Number(entry.extraHours) : undefined,
+        extraHoursRate: entry.extraHoursRate ? Number(entry.extraHoursRate) : undefined,
+        total: entry.total ? Number(entry.total) : undefined,
+        totalHours: entry.totalHours ? Number(entry.totalHours) : undefined,
+      }));
     } catch (error) {
       if (error.name === 'CastError') {
         throw new BadRequestException('ID de empleado no válido');
