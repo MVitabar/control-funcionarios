@@ -89,6 +89,24 @@ export class TimeEntriesService {
 
   private readonly logger = new Logger(TimeEntriesService.name);
 
+  private cleanNotes(notes: any): string | undefined {
+    if (notes === null || notes === undefined || notes === '') {
+      return undefined;
+    }
+
+    try {
+      // Convertir a string, limpiar y truncar si es necesario
+      return String(notes)
+        .trim()
+        .replace(/[\r\n\t]+/g, ' ')  // Reemplazar saltos de línea y tabulaciones
+        .replace(/\s+/g, ' ')         // Múltiples espacios por uno solo
+        .substring(0, 500);           // Limitar longitud
+    } catch (error) {
+      this.logger.warn(`Error al limpiar notas: ${error.message}`, notes);
+      return undefined;
+    }
+  }
+
   async create(
     createTimeEntryDto: CreateTimeEntryDto, 
     userId?: string
@@ -152,6 +170,7 @@ export class TimeEntriesService {
         date: entryDate,
         entryTime: entryTime,
         exitTime: exitTime,
+        notes: this.cleanNotes(createTimeEntryDto.notes),
         totalHours,
         regularHours,
         status: createTimeEntryDto.status || TimeEntryStatus.PENDING,
@@ -375,14 +394,20 @@ export class TimeEntriesService {
     notes?: string,
   ): Promise<TimeEntry> {
     try {
+      const updateData: any = {
+        status,
+        ...(notes !== undefined && { notes: this.cleanNotes(notes) }),
+        updatedAt: new Date(),
+      };
+
+      if (status === TimeEntryStatus.APPROVED) {
+        updateData.approvedBy = userId;
+        updateData.approvedAt = new Date();
+      }
+
       const entry = await this.timeEntryModel.findByIdAndUpdate(
         id,
-        {
-          status,
-          ...(notes !== undefined && { notes }),
-          approvedBy: userId,
-          updatedAt: new Date(),
-        },
+        updateData,
         { new: true, lean: true },
       ).exec();
 
