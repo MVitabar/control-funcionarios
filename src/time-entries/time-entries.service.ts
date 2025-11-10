@@ -1,14 +1,88 @@
 import { 
   BadRequestException, 
   Injectable, 
-  NotFoundException 
+  NotFoundException,
+  Logger 
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { CreateTimeEntryDto } from './dto/create-time-entry.dto';
 import { TimeEntry, TimeEntryDocument, TimeEntryStatus } from './schemas/time-entry.schema';
+import { Employee } from '../employees/schemas/employee.schema';
 import { convertIdsToStrings, toObjectId } from '../common/utils/mongo.utils';
 import * as moment from 'moment';
+
+// Base interface for time entry with all possible fields
+type BaseTimeEntry = {
+  _id: Types.ObjectId;
+  employee: Types.ObjectId | PopulatedEmployee;
+  date: Date;
+  entryTime: Date;
+  exitTime?: Date;
+  status: TimeEntryStatus;
+  dailyRate?: number;
+  extraHours?: number;
+  extraHoursRate?: number;
+  total?: number;
+  totalHours?: number | string;
+  regularHours?: number | string;
+  notes?: string;
+  approvedBy?: Types.ObjectId | PopulatedUser;
+  approvedAt?: Date;
+  rejectedAt?: Date;
+  rejectedReason?: string;
+  rejectedBy?: Types.ObjectId | PopulatedUser;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type PopulatedEmployee = {
+  _id: Types.ObjectId;
+  name: string;
+  email?: string;
+};
+
+type PopulatedUser = {
+  _id: Types.ObjectId;
+  name: string;
+  email: string;
+};
+
+// This is what we send to the client
+type TimeEntryResponse = {
+  _id: string;
+  employee: {
+    _id: string;
+    name: string;
+    email?: string;
+  };
+  date: string;
+  entryTime: string;
+  exitTime?: string;
+  status: TimeEntryStatus;
+  dailyRate?: number;
+  extraHours?: number;
+  extraHoursRate?: number;
+  total?: number;
+  totalHours?: number | string;
+  regularHours?: number | string;
+  notes?: string;
+  approvedBy?: {
+    _id: string;
+    name: string;
+    email: string;
+  };
+  approvedAt?: string;
+  rejectedAt?: string;
+  rejectedReason?: string;
+  rejectedBy?: {
+    _id: string;
+    name: string;
+    email: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
 
 @Injectable()
 export class TimeEntriesService {
@@ -16,95 +90,179 @@ export class TimeEntriesService {
     @InjectModel(TimeEntry.name) private timeEntryModel: Model<TimeEntryDocument>,
   ) {}
 
-  async create(createTimeEntryDto: CreateTimeEntryDto, userId?: string): Promise<TimeEntry> {
-    // Convert dates to Date objects
-    const entryDate = new Date(createTimeEntryDto.date);
-    const entryTime = new Date(createTimeEntryDto.entryTime);
-    const exitTime = createTimeEntryDto.exitTime ? new Date(createTimeEntryDto.exitTime) : null;
-    
-    // Convert employee ID to ObjectId if it's a string
-    const employeeId = typeof createTimeEntryDto.employee === 'string' 
-      ? toObjectId(createTimeEntryDto.employee)
-      : createTimeEntryDto.employee;
+  private readonly logger = new Logger(TimeEntriesService.name);
 
-    // Check if an entry already exists for this employee on the given date
-    const existingEntry = await this.timeEntryModel.findOne({
-      employee: employeeId,
-      date: {
-        $gte: moment(entryDate).startOf('day').toDate(),
-        $lte: moment(entryDate).endOf('day').toDate(),
-      },
-    }).exec();
-
-    if (existingEntry) {
-      throw new BadRequestException('Ya existe un registro para este empleado en la fecha especificada');
-    }
-
-    // Prepare data for creation
-    const entryData = {
-      ...createTimeEntryDto,
-      employee: employeeId, // Use the converted employeeId
-      date: entryDate,
-      entryTime: entryTime,
-      exitTime: exitTime,
-      // Ensure numeric fields are numbers
-      dailyRate: createTimeEntryDto.dailyRate ? Number(createTimeEntryDto.dailyRate) : undefined,
-      extraHours: createTimeEntryDto.extraHours ? Number(createTimeEntryDto.extraHours) : undefined,
-      extraHoursRate: createTimeEntryDto.extraHoursRate ? Number(createTimeEntryDto.extraHoursRate) : undefined,
-      total: createTimeEntryDto.total ? Number(createTimeEntryDto.total) : undefined,
+  async create(
+    createTimeEntryDto: CreateTimeEntryDto, 
+    userId?: string
+  ): Promise<TimeEntryResponse> {
+    type PopulatedEntry = Omit<TimeEntry, 'employee' | 'approvedBy'> & {
+      employee: { _id: Types.ObjectId; name: string; email?: string };
+      approvedBy?: { _id: Types.ObjectId; name: string; email: string };
     };
+    try {
+      // Parse and validate dates
+      const entryDate = new Date(createTimeEntryDto.date);
+      const entryTime = new Date(createTimeEntryDto.entryTime);
+      const exitTime = createTimeEntryDto.exitTime ? new Date(createTimeEntryDto.exitTime) : null;
+      
+      if (isNaN(entryDate.getTime())) {
+        throw new BadRequestException('Fecha de entrada inválida');
+      }
+      
+      if (isNaN(entryTime.getTime())) {
+        throw new BadRequestException('Hora de entrada inválida');
+      }
+      
+      if (exitTime && isNaN(exitTime.getTime())) {
+        throw new BadRequestException('Hora de salida inválida');
+      }
+      
+      // Convert employee ID to ObjectId if it's a string
+      const employeeId = typeof createTimeEntryDto.employee === 'string' 
+        ? toObjectId(createTimeEntryDto.employee)
+        : createTimeEntryDto.employee;
 
-    // Calcular horas trabajadas si se proporciona la hora de salida
-    let totalHours = null;
-    let regularHours = null;
-    
-    if (createTimeEntryDto.exitTime) {
-      const entryMoment = moment(createTimeEntryDto.entryTime);
-      const exitMoment = moment(createTimeEntryDto.exitTime);
-      regularHours = parseFloat(exitMoment.diff(entryMoment, 'hours', true).toFixed(2));
-      const extraHours = createTimeEntryDto.extraHours ? parseFloat(createTimeEntryDto.extraHours.toString()) : 0;
-      totalHours = (regularHours + extraHours).toFixed(2);
+      // Check if an entry already exists for this employee on the given date
+      const existingEntry = await this.timeEntryModel.findOne({
+        employee: employeeId,
+        date: {
+          $gte: moment(entryDate).startOf('day').toDate(),
+          $lte: moment(entryDate).endOf('day').toDate(),
+        },
+      }).exec();
+
+      if (existingEntry) {
+        throw new BadRequestException('Ya existe un registro para este empleado en la fecha especificada');
+      }
+
+      // Calculate hours worked if exit time is provided
+      let totalHours = null;
+      let regularHours = null;
+      
+      if (exitTime) {
+        const entryMoment = moment(entryTime);
+        const exitMoment = moment(exitTime);
+        regularHours = parseFloat(exitMoment.diff(entryMoment, 'hours', true).toFixed(2));
+        const extraHours = createTimeEntryDto.extraHours ? parseFloat(createTimeEntryDto.extraHours.toString()) : 0;
+        totalHours = (regularHours + extraHours).toFixed(2);
+      }
+
+      // Prepare data for creation
+      const entryData = {
+        ...createTimeEntryDto,
+        employee: employeeId,
+        date: entryDate,
+        entryTime: entryTime,
+        exitTime: exitTime,
+        totalHours,
+        regularHours,
+        status: createTimeEntryDto.status || TimeEntryStatus.PENDING,
+        approvedBy: userId ? new Types.ObjectId(userId) : undefined,
+        dailyRate: createTimeEntryDto.dailyRate ? Number(createTimeEntryDto.dailyRate) : undefined,
+        extraHours: createTimeEntryDto.extraHours ? Number(createTimeEntryDto.extraHours) : undefined,
+        extraHoursRate: createTimeEntryDto.extraHoursRate ? Number(createTimeEntryDto.extraHoursRate) : undefined,
+        total: createTimeEntryDto.total ? Number(createTimeEntryDto.total) : undefined,
+      };
+
+      const createdEntry = new this.timeEntryModel(entryData);
+      const savedEntry = await createdEntry.save();
+      
+      // Populate employee data and convert to response
+      type PopulatedEntry = Omit<BaseTimeEntry, 'employee' | 'approvedBy' | 'rejectedBy'> & {
+        employee: PopulatedEmployee;
+        approvedBy?: PopulatedUser;
+        rejectedBy?: PopulatedUser;
+      };
+
+      const populatedEntry = (await this.timeEntryModel
+        .findById(savedEntry._id)
+        .populate('employee', 'name email')
+        .populate('approvedBy', 'name email')
+        .populate('rejectedBy', 'name email')
+        .lean()
+        .exec()) as unknown as PopulatedEntry | null;
+
+      if (!populatedEntry) {
+        throw new NotFoundException('No se pudo recuperar el registro de tiempo recién creado');
+      }
+
+      return this.mapToTimeEntryResponse(populatedEntry);
+    } catch (error) {
+      this.logger.error(error);
+      throw error;
     }
-
-    const createdEntry = new this.timeEntryModel({
-      ...entryData,
-      totalHours,
-      regularHours,
-      status: createTimeEntryDto.status || TimeEntryStatus.PENDING,
-      approvedBy: userId ? new Types.ObjectId(userId) : undefined,
-      // Asegurarse de que los campos numéricos sean números
-      dailyRate: entryData.dailyRate ? Number(entryData.dailyRate) : undefined,
-      extraHours: entryData.extraHours ? Number(entryData.extraHours) : undefined,
-      extraHoursRate: entryData.extraHoursRate ? Number(entryData.extraHoursRate) : undefined,
-      total: entryData.total ? Number(entryData.total) : undefined,
-    });
-
-    const savedEntry = await createdEntry.save();
-    return convertIdsToStrings(savedEntry.toObject());
   }
 
-  async findAllByEmployee(employeeId: string | Types.ObjectId): Promise<TimeEntry[]> {
+  private mapToTimeEntryResponse(
+    entry: Omit<BaseTimeEntry, 'employee' | 'approvedBy' | 'rejectedBy'> & {
+      employee: PopulatedEmployee;
+      approvedBy?: PopulatedUser;
+      rejectedBy?: PopulatedUser;
+    }
+  ): TimeEntryResponse {
+    const toIsoString = (date?: Date | string | null): string | undefined => {
+      if (!date) return undefined;
+      return date instanceof Date ? date.toISOString() : new Date(date).toISOString();
+    };
+
+    return {
+      _id: entry._id?.toString() ?? '',
+      employee: {
+        _id: entry.employee?._id?.toString() ?? '',
+        name: entry.employee?.name ?? '',
+        email: entry.employee?.email
+      },
+      date: toIsoString(entry.date) ?? '',
+      entryTime: toIsoString(entry.entryTime) ?? '',
+      exitTime: toIsoString(entry.exitTime),
+      status: entry.status,
+      dailyRate: entry.dailyRate,
+      extraHours: entry.extraHours,
+      extraHoursRate: entry.extraHoursRate,
+      total: entry.total,
+      totalHours: entry.totalHours,
+      regularHours: entry.regularHours,
+      notes: entry.notes,
+      approvedBy: entry.approvedBy ? {
+        _id: entry.approvedBy._id.toString(),
+        name: entry.approvedBy.name,
+        email: entry.approvedBy.email
+      } : undefined,
+      approvedAt: toIsoString(entry.approvedAt),
+      rejectedAt: toIsoString(entry.rejectedAt),
+      rejectedReason: entry.rejectedReason,
+      rejectedBy: entry.rejectedBy ? {
+        _id: entry.rejectedBy._id.toString(),
+        name: entry.rejectedBy.name,
+        email: entry.rejectedBy.email
+      } : undefined,
+      createdAt: toIsoString(entry.createdAt) ?? '',
+      updatedAt: toIsoString(entry.updatedAt) ?? ''
+    };
+  }
+
+  async findAllByEmployee(employeeId: string | Types.ObjectId): Promise<TimeEntryResponse[]> {
     try {
       // Ensure employeeId is a valid ObjectId
       const employeeObjectId = toObjectId(employeeId);
 
-      const entries = await this.timeEntryModel
+      type PopulatedEntry = Omit<BaseTimeEntry, 'employee' | 'approvedBy' | 'rejectedBy'> & {
+        employee: PopulatedEmployee;
+        approvedBy?: PopulatedUser;
+        rejectedBy?: PopulatedUser;
+      };
+
+      const entries = (await this.timeEntryModel
         .find({ employee: employeeObjectId })
+        .populate('employee', 'name email')
         .populate('approvedBy', 'name email')
-        .populate('employee', 'name email') // Ensure employee is populated
+        .populate('rejectedBy', 'name email')
         .sort({ date: -1, entryTime: 1 })
         .lean()
-        .exec();
+        .exec()) as unknown as PopulatedEntry[];
 
-      // Convert numeric fields to numbers and ensure IDs are strings
-      return entries.map(entry => convertIdsToStrings({
-        ...entry,
-        dailyRate: entry.dailyRate ? Number(entry.dailyRate) : undefined,
-        extraHours: entry.extraHours ? Number(entry.extraHours) : undefined,
-        extraHoursRate: entry.extraHoursRate ? Number(entry.extraHoursRate) : undefined,
-        total: entry.total ? Number(entry.total) : undefined,
-        totalHours: entry.totalHours ? Number(entry.totalHours) : undefined,
-      }));
+      return entries.map(entry => this.mapToTimeEntryResponse(entry));
     } catch (error) {
       if (error.name === 'CastError') {
         throw new BadRequestException('ID de empleado no válido');
@@ -117,12 +275,30 @@ export class TimeEntriesService {
     startDate: Date,
     endDate: Date,
     employeeId?: string | Types.ObjectId,
-  ): Promise<TimeEntry[]> {
+  ): Promise<TimeEntryResponse[]> {
     try {
+      // Validate dates
+      const start = moment(startDate).startOf('day');
+      const end = moment(endDate).endOf('day');
+      
+      if (!start.isValid() || !end.isValid()) {
+        throw new BadRequestException('Fechas inválidas');
+      }
+      
+      if (start.isAfter(end)) {
+        throw new BadRequestException('La fecha de inicio no puede ser posterior a la fecha de fin');
+      }
+
+      type PopulatedEntry = Omit<BaseTimeEntry, 'employee' | 'approvedBy' | 'rejectedBy'> & {
+        employee: PopulatedEmployee;
+        approvedBy?: PopulatedUser;
+        rejectedBy?: PopulatedUser;
+      };
+
       const query: any = {
         date: {
-          $gte: moment(startDate).startOf('day').toDate(),
-          $lte: moment(endDate).endOf('day').toDate(),
+          $gte: start.toDate(),
+          $lte: end.toDate(),
         },
       };
 
@@ -131,23 +307,16 @@ export class TimeEntriesService {
         query.employee = toObjectId(employeeId);
       }
 
-      const entries = await this.timeEntryModel
+      const entries = (await this.timeEntryModel
         .find(query)
-        .populate('employee', 'name email') // Include basic employee data
-        .populate('approvedBy', 'name email') // Include approver data
+        .populate('employee', 'name email')
+        .populate('approvedBy', 'name email')
+        .populate('rejectedBy', 'name email')
         .sort({ date: -1, entryTime: 1 })
         .lean()
-        .exec();
+        .exec()) as unknown as PopulatedEntry[];
 
-      // Convert numeric fields to numbers and ensure IDs are strings
-      return entries.map(entry => convertIdsToStrings({
-        ...entry,
-        dailyRate: entry.dailyRate ? Number(entry.dailyRate) : undefined,
-        extraHours: entry.extraHours ? Number(entry.extraHours) : undefined,
-        extraHoursRate: entry.extraHoursRate ? Number(entry.extraHoursRate) : undefined,
-        total: entry.total ? Number(entry.total) : undefined,
-        totalHours: entry.totalHours ? Number(entry.totalHours) : undefined,
-      }));
+      return entries.map(entry => this.mapToTimeEntryResponse(entry));
     } catch (error) {
       if (error.name === 'CastError') {
         throw new BadRequestException('ID de empleado no válido');

@@ -1,7 +1,7 @@
 import { Types } from 'mongoose';
 
 /**
- * Converts MongoDB IDs to strings in a document or array of documents
+ * Converts MongoDB IDs to strings and ensures proper date serialization
  * Handles nested documents and arrays recursively
  */
 export function convertIdsToStrings<T>(doc: T): T {
@@ -12,33 +12,67 @@ export function convertIdsToStrings<T>(doc: T): T {
     return doc.map((item) => convertIdsToStrings(item)) as unknown as T;
   }
 
+  // Handle Mongoose documents
+  if (doc && typeof doc === 'object' && '_id' in doc) {
+    const docObj = doc as { toObject?: () => any };
+    if (typeof docObj.toObject === 'function') {
+      return convertIdsToStrings(docObj.toObject()) as T;
+    }
+    return convertIdsToStrings({ ...doc as any }) as T;
+  }
+
   // Handle nested objects
   if (typeof doc === 'object' && doc !== null) {
+    // Handle Date objects
+    if (doc instanceof Date) {
+      return doc.toISOString() as unknown as T;
+    }
+
+    // Handle Buffer (for ObjectId)
+    if (Buffer.isBuffer(doc)) {
+      try {
+        return new Types.ObjectId(doc).toString() as unknown as T;
+      } catch (error) {
+        console.warn('Failed to convert buffer to ObjectId:', error);
+        return doc;
+      }
+    }
+
     // Create a new object to avoid modifying the original
     const result: Record<string, any> = {};
     
     for (const [key, value] of Object.entries(doc)) {
-      // Convert MongoDB _id to string
+      // Skip __v field
+      if (key === '__v') continue;
+      
+      // Handle _id field
       if (key === '_id' && value) {
         if (value instanceof Types.ObjectId) {
           result[key] = value.toString();
+          result.id = value.toString(); // Add id alias
           continue;
         } else if (value?.buffer) {
-          // Handle Buffer representation of ObjectId
           try {
             const buffer = Buffer.isBuffer(value.buffer) 
               ? value.buffer 
               : Buffer.from(Object.values(value.buffer));
-            result[key] = new Types.ObjectId(buffer).toString();
+            const objectId = new Types.ObjectId(buffer);
+            result[key] = objectId.toString();
+            result.id = objectId.toString(); // Add id alias
             continue;
           } catch (error) {
-            // If conversion fails, keep the original value
             console.warn('Failed to convert buffer to ObjectId:', error);
           }
         }
       }
       
-      // Recursively process nested objects and arrays
+      // Handle Date objects
+      if (value instanceof Date) {
+        result[key] = value.toISOString();
+        continue;
+      }
+      
+      // Handle nested objects and arrays
       if (typeof value === 'object' && value !== null) {
         result[key] = convertIdsToStrings(value);
       } else {
