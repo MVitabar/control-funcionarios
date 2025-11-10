@@ -29,9 +29,6 @@ type BaseTimeEntry = {
   notes?: string;
   approvedBy?: Types.ObjectId | PopulatedUser;
   approvedAt?: Date;
-  rejectedAt?: Date;
-  rejectedReason?: string;
-  rejectedBy?: Types.ObjectId | PopulatedUser;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -169,17 +166,15 @@ export class TimeEntriesService {
       const savedEntry = await createdEntry.save();
       
       // Populate employee data and convert to response
-      type PopulatedEntry = Omit<BaseTimeEntry, 'employee' | 'approvedBy' | 'rejectedBy'> & {
+      type PopulatedEntry = Omit<BaseTimeEntry, 'employee' | 'approvedBy'> & {
         employee: PopulatedEmployee;
         approvedBy?: PopulatedUser;
-        rejectedBy?: PopulatedUser;
       };
 
       const populatedEntry = (await this.timeEntryModel
         .findById(savedEntry._id)
         .populate('employee', 'name email')
         .populate('approvedBy', 'name email')
-        .populate('rejectedBy', 'name email')
         .lean()
         .exec()) as unknown as PopulatedEntry | null;
 
@@ -195,10 +190,9 @@ export class TimeEntriesService {
   }
 
   private mapToTimeEntryResponse(
-    entry: Omit<BaseTimeEntry, 'employee' | 'approvedBy' | 'rejectedBy'> & {
+    entry: Omit<BaseTimeEntry, 'employee' | 'approvedBy'> & {
       employee: PopulatedEmployee;
       approvedBy?: PopulatedUser;
-      rejectedBy?: PopulatedUser;
     }
   ): TimeEntryResponse {
     const toIsoString = (date?: Date | string | null): string | undefined => {
@@ -230,13 +224,6 @@ export class TimeEntriesService {
         email: entry.approvedBy.email
       } : undefined,
       approvedAt: toIsoString(entry.approvedAt),
-      rejectedAt: toIsoString(entry.rejectedAt),
-      rejectedReason: entry.rejectedReason,
-      rejectedBy: entry.rejectedBy ? {
-        _id: entry.rejectedBy._id.toString(),
-        name: entry.rejectedBy.name,
-        email: entry.rejectedBy.email
-      } : undefined,
       createdAt: toIsoString(entry.createdAt) ?? '',
       updatedAt: toIsoString(entry.updatedAt) ?? ''
     };
@@ -247,17 +234,15 @@ export class TimeEntriesService {
       // Ensure employeeId is a valid ObjectId
       const employeeObjectId = toObjectId(employeeId);
 
-      type PopulatedEntry = Omit<BaseTimeEntry, 'employee' | 'approvedBy' | 'rejectedBy'> & {
+      type PopulatedEntry = Omit<BaseTimeEntry, 'employee' | 'approvedBy'> & {
         employee: PopulatedEmployee;
         approvedBy?: PopulatedUser;
-        rejectedBy?: PopulatedUser;
       };
 
       const entries = (await this.timeEntryModel
         .find({ employee: employeeObjectId })
         .populate('employee', 'name email')
         .populate('approvedBy', 'name email')
-        .populate('rejectedBy', 'name email')
         .sort({ date: -1, entryTime: 1 })
         .lean()
         .exec()) as unknown as PopulatedEntry[];
@@ -289,10 +274,9 @@ export class TimeEntriesService {
         throw new BadRequestException('La fecha de inicio no puede ser posterior a la fecha de fin');
       }
 
-      type PopulatedEntry = Omit<BaseTimeEntry, 'employee' | 'approvedBy' | 'rejectedBy'> & {
+      type PopulatedEntry = Omit<BaseTimeEntry, 'employee' | 'approvedBy'> & {
         employee: PopulatedEmployee;
         approvedBy?: PopulatedUser;
-        rejectedBy?: PopulatedUser;
       };
 
       const query: any = {
@@ -311,7 +295,6 @@ export class TimeEntriesService {
         .find(query)
         .populate('employee', 'name email')
         .populate('approvedBy', 'name email')
-        .populate('rejectedBy', 'name email')
         .sort({ date: -1, entryTime: 1 })
         .lean()
         .exec()) as unknown as PopulatedEntry[];
