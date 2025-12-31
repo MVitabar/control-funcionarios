@@ -458,7 +458,7 @@ export class TimeEntriesService {
 
         const entryTime = updateData.entryTime || existingEntry.entryTime;
         const exitTime = updateData.exitTime || existingEntry.exitTime;
-        const extraHours = updateData.extraHours !== undefined ? 
+        const extraHours = updateData.extraHours !== undefined && updateData.extraHours !== null ? 
           parseFloat(updateData.extraHours.toString()) : 
           (existingEntry.extraHours ? parseFloat(existingEntry.extraHours.toString()) : 0);
 
